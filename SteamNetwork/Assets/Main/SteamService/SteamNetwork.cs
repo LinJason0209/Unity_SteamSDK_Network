@@ -24,9 +24,5 @@ namespace JasonLin.SteamSDK.Network
                 else { Debug.LogWarning("Steam has not been initialzation!"); }
             }
         }
-        private void CreateLobby()
-        {
-
-        }
     }
 }
