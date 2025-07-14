@@ -18,7 +18,7 @@ namespace JasonLin.SteamSDK.Lobby
     }
     public class SteamLobbyCreaterService
     {
-        public Action<ulong, CSteamID> OnLobbyCreated;
+        public event Action<SteamLobbyInfo> OnLobbyCreated;
         protected Callback<LobbyCreated_t> _lobbyCreated;
         public LobbyConfig LobbyConfig { get; private set; }
         public SteamLobbyCreaterService()
@@ -27,7 +27,7 @@ namespace JasonLin.SteamSDK.Lobby
         }
         public void CreateLobby(LobbyConfig config)
         {
-            if (SteamUtility.CheckSteamInitialization() is false) return;
+            if (SteamLobbyUtility.CheckSteamInitialization() is false) return;
             LobbyConfig = config;
             SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypePublic, LobbyConfig.MaxPlayerCount);
             Debug.Log($"[Steam][Host] Start create lobby...");
@@ -44,7 +44,12 @@ namespace JasonLin.SteamSDK.Lobby
             { SteamMatchmaking.SetLobbyData(cSteamID, element.Key, element.Value); }
 
             Debug.Log($"[Steam][Host] Create the lobby success. \nLobby ID: {id}");
-            OnLobbyCreated?.Invoke(id, cSteamID);
+            SteamLobbyInfo lobbyInfo = new();
+            lobbyInfo.lobbyID = id;
+            lobbyInfo.CSteamID = cSteamID;
+            lobbyInfo.Name = SteamMatchmaking.GetLobbyData(cSteamID, "name");
+            lobbyInfo.IsOrner = true;
+            OnLobbyCreated?.Invoke(lobbyInfo);
         }
     }
 
