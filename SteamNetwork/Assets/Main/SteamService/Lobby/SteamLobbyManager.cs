@@ -1,4 +1,5 @@
 using JasonLin.SteamSDK.User;
+using Steamworks;
 using UnityEngine;
 using UnityEngine.SocialPlatforms.Impl;
 
@@ -11,6 +12,8 @@ namespace JasonLin.SteamSDK.Lobby
         private SteamLobbyCreaterService _createrService;
         private SteamLobbyMemberService _memberService;
         private LobbyConfig _defaultLobbyConfig;
+        private Callback<LobbyChatMsg_t> _lobbyChatMsgCallback;
+
         private void Start()
         {
             SteamLobbyUtility.OnDisbandLobby += (lobbyID) => LeaveLobby(lobbyID);
@@ -21,6 +24,8 @@ namespace JasonLin.SteamSDK.Lobby
 
             _defaultLobbyConfig = new(3);
             _defaultLobbyConfig.AddLobbyData("name", "Jason's Home");
+
+            _lobbyChatMsgCallback = Callback<LobbyChatMsg_t>.Create(OnLobbyChatMessageReceived);
         }
         private void InitiCreaterService()
         {
@@ -35,10 +40,14 @@ namespace JasonLin.SteamSDK.Lobby
             {
                 if (UserInfo.SteamLobbyInfoDic.ContainsKey(lobbyInfo.lobbyID) is false)
                 { UserInfo.SteamLobbyInfoDic.Add(lobbyInfo.lobbyID, lobbyInfo); }
+
+                SendLobbyChatMessage(lobbyInfo.lobbyID, "Hello from " + SteamFriends.GetPersonaName());
+
             };
 
             _memberService.OnLeaveLobby += (lobbyID) =>
             {
+                Debug.Log("Leave lobbyID=" + lobbyID);
                 if (UserInfo.SteamLobbyInfoDic.ContainsKey(lobbyID) is true)
                 { UserInfo.SteamLobbyInfoDic.Remove(lobbyID); }
             };
@@ -63,6 +72,40 @@ namespace JasonLin.SteamSDK.Lobby
             if (SteamLobbyUtility.IsLobbyOwner(lobbyID) is true)
             { SteamLobbyUtility.DisbandLobby(lobbyID); }
         }
+
+        public void SendLobbyChatMessage(ulong lobbyID, string message)
+        {
+            byte[] messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
+            var steamID = new CSteamID(lobbyID);
+            SteamMatchmaking.SendLobbyChatMsg(steamID, messageBytes, messageBytes.Length);
+        }
+
+        private void OnLobbyChatMessageReceived(LobbyChatMsg_t callback)
+        {
+            CSteamID lobbyID = (CSteamID)callback.m_ulSteamIDLobby;
+            CSteamID userID = (CSteamID)callback.m_ulSteamIDUser;
+
+            byte[] data = new byte[4096]; // Max message size
+            EChatEntryType chatEntryType;
+            CSteamID sender;
+            int chatID = unchecked((int)callback.m_iChatID);
+
+            int bytesRead = SteamMatchmaking.GetLobbyChatEntry(
+                lobbyID,
+                chatID,
+                out sender,
+                data,
+                data.Length,
+                out chatEntryType
+            );
+
+            if (chatEntryType == EChatEntryType.k_EChatEntryTypeChatMsg)
+            {
+                string message = System.Text.Encoding.UTF8.GetString(data, 0, bytesRead);
+                Debug.Log($"[Lobby Chat] {SteamFriends.GetFriendPersonaName(sender)}: {message}");
+            }
+        }
+
     }
 
 }
