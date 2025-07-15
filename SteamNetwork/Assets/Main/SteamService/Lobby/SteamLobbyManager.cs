@@ -58,6 +58,21 @@ namespace JasonLin.SteamSDK.Lobby
             if (Input.GetKeyDown(KeyCode.C)) { CreateLobby(); }
             if (Input.GetKeyDown(KeyCode.J)) { JoinLobby(JoinLobbyID); }
             if (Input.GetKeyDown(KeyCode.E)) { LeaveLobby(JoinLobbyID); }
+            if (Input.GetKeyDown(KeyCode.Q)) { SendP2PMessage(SteamLobbyUtility.GetLobbyOwner(JoinLobbyID), "Test P2P Packet"); }
+
+            if (!SteamManager.Initialized) return;
+
+            uint msgSize;
+            while (SteamNetworking.IsP2PPacketAvailable(out msgSize))
+            {
+                byte[] buffer = new byte[msgSize];
+                CSteamID sender;
+                if (SteamNetworking.ReadP2PPacket(buffer, msgSize, out uint bytesRead, out sender))
+                {
+                    string msg = System.Text.Encoding.UTF8.GetString(buffer, 0, (int)bytesRead);
+                    Debug.Log("Received message: " + msg);
+                }
+            }
         }
 
         public void CreateLobby()
@@ -78,6 +93,12 @@ namespace JasonLin.SteamSDK.Lobby
             byte[] messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
             var steamID = new CSteamID(lobbyID);
             SteamMatchmaking.SendLobbyChatMsg(steamID, messageBytes, messageBytes.Length);
+        }
+
+        public void SendP2PMessage(CSteamID targetUser, string message)
+        {
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(message);
+            SteamNetworking.SendP2PPacket(targetUser, bytes, (uint)bytes.Length, EP2PSend.k_EP2PSendReliable);
         }
 
         private void OnLobbyChatMessageReceived(LobbyChatMsg_t callback)
