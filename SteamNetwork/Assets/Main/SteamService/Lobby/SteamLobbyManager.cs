@@ -1,7 +1,6 @@
 using JasonLin.SteamSDK.User;
 using Steamworks;
 using UnityEngine;
-using UnityEngine.SocialPlatforms.Impl;
 
 namespace JasonLin.SteamSDK.Lobby
 {
@@ -9,13 +8,25 @@ namespace JasonLin.SteamSDK.Lobby
     {
         public ulong JoinLobbyID;
         public SteamUserInfo UserInfo;
+
         private SteamLobbyCreaterService _createrService;
         private SteamLobbyMemberService _memberService;
         private LobbyConfig _defaultLobbyConfig;
+
         private Callback<LobbyChatMsg_t> _lobbyChatMsgCallback;
+        private Callback<P2PSessionRequest_t> _p2pSessionRequestCallback;
+        private Callback<P2PSessionConnectFail_t> _p2pSessionFailCallback;
 
         private void Start()
         {
+            if (!SteamManager.Initialized)
+            {
+                Debug.LogError("Steam not initialized.");
+                return;
+            }
+
+            SteamNetworking.AllowP2PPacketRelay(true); // relay = NAT fallback
+
             SteamLobbyUtility.OnDisbandLobby += (lobbyID) => LeaveLobby(lobbyID);
             UserInfo = new();
 
@@ -26,42 +37,54 @@ namespace JasonLin.SteamSDK.Lobby
             _defaultLobbyConfig.AddLobbyData("name", "Jason's Home");
 
             _lobbyChatMsgCallback = Callback<LobbyChatMsg_t>.Create(OnLobbyChatMessageReceived);
+            _p2pSessionRequestCallback = Callback<P2PSessionRequest_t>.Create(OnSessionRequest);
+            _p2pSessionFailCallback = Callback<P2PSessionConnectFail_t>.Create(OnSessionConnectFail);
         }
+
         private void InitiCreaterService()
         {
             _createrService = new();
             _createrService.OnLobbyCreated += (lobbyInfo) =>
-            { UserInfo.SteamLobbyInfoDic.Add(lobbyInfo.lobbyID, lobbyInfo); };
+            {
+                UserInfo.SteamLobbyInfoDic.Add(lobbyInfo.lobbyID, lobbyInfo);
+            };
         }
+
         private void InitiMemberService()
         {
             _memberService = new();
             _memberService.OnJoinLobby += (lobbyInfo) =>
             {
-                if (UserInfo.SteamLobbyInfoDic.ContainsKey(lobbyInfo.lobbyID) is false)
-                { UserInfo.SteamLobbyInfoDic.Add(lobbyInfo.lobbyID, lobbyInfo); }
+                if (!UserInfo.SteamLobbyInfoDic.ContainsKey(lobbyInfo.lobbyID))
+                    UserInfo.SteamLobbyInfoDic.Add(lobbyInfo.lobbyID, lobbyInfo);
 
                 SendLobbyChatMessage(lobbyInfo.lobbyID, "Hello from " + SteamFriends.GetPersonaName());
-
             };
 
             _memberService.OnLeaveLobby += (lobbyID) =>
             {
                 Debug.Log("Leave lobbyID=" + lobbyID);
-                if (UserInfo.SteamLobbyInfoDic.ContainsKey(lobbyID) is true)
-                { UserInfo.SteamLobbyInfoDic.Remove(lobbyID); }
+                if (UserInfo.SteamLobbyInfoDic.ContainsKey(lobbyID))
+                    UserInfo.SteamLobbyInfoDic.Remove(lobbyID);
             };
         }
 
         private void Update()
         {
+            if (!SteamManager.Initialized) return;
+
+            // Input actions
             if (Input.GetKeyDown(KeyCode.C)) { CreateLobby(); }
             if (Input.GetKeyDown(KeyCode.J)) { JoinLobby(JoinLobbyID); }
             if (Input.GetKeyDown(KeyCode.E)) { LeaveLobby(JoinLobbyID); }
-            if (Input.GetKeyDown(KeyCode.Q)) { SendP2PMessage(SteamLobbyUtility.GetLobbyOwner(JoinLobbyID), "Test P2P Packet"); }
+            if (Input.GetKeyDown(KeyCode.Q))
+            {
+                var target = SteamLobbyUtility.GetLobbyOwner(JoinLobbyID);
+                Debug.Log("Sending P2P to: " + target.m_SteamID);
+                SendP2PMessage(target, "Test P2P Packet");
+            }
 
-            if (!SteamManager.Initialized) return;
-
+            // P2P receiving
             uint msgSize;
             while (SteamNetworking.IsP2PPacketAvailable(out msgSize))
             {
@@ -69,23 +92,30 @@ namespace JasonLin.SteamSDK.Lobby
                 CSteamID sender;
                 if (SteamNetworking.ReadP2PPacket(buffer, msgSize, out uint bytesRead, out sender))
                 {
+                    SteamNetworking.AcceptP2PSessionWithUser(sender); // VERY IMPORTANT
                     string msg = System.Text.Encoding.UTF8.GetString(buffer, 0, (int)bytesRead);
-                    Debug.Log("Received message: " + msg);
+                    Debug.Log($"[P2P] From {sender.m_SteamID}: {msg}");
                 }
             }
         }
 
         public void CreateLobby()
-        { _createrService.CreateLobby(_defaultLobbyConfig); }
+        {
+            _createrService.CreateLobby(_defaultLobbyConfig);
+        }
 
-        public void JoinLobby(ulong lobbyID) 
-        { _memberService.JoinLobby(lobbyID); }
+        public void JoinLobby(ulong lobbyID)
+        {
+            _memberService.JoinLobby(lobbyID);
+        }
 
         public void LeaveLobby(ulong lobbyID)
-        { 
+        {
             _memberService.LeaveLobby(lobbyID);
-            if (SteamLobbyUtility.IsLobbyOwner(lobbyID) is true)
-            { SteamLobbyUtility.DisbandLobby(lobbyID); }
+            if (SteamLobbyUtility.IsLobbyOwner(lobbyID))
+            {
+                SteamLobbyUtility.DisbandLobby(lobbyID);
+            }
         }
 
         public void SendLobbyChatMessage(ulong lobbyID, string message)
@@ -98,19 +128,19 @@ namespace JasonLin.SteamSDK.Lobby
         public void SendP2PMessage(CSteamID targetUser, string message)
         {
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(message);
-            SteamNetworking.SendP2PPacket(targetUser, bytes, (uint)bytes.Length, EP2PSend.k_EP2PSendReliable);
+            bool success = SteamNetworking.SendP2PPacket(targetUser, bytes, (uint)bytes.Length, EP2PSend.k_EP2PSendReliable);
+            if (!success)
+                Debug.LogWarning("P2P packet failed to send.");
         }
 
         private void OnLobbyChatMessageReceived(LobbyChatMsg_t callback)
         {
             CSteamID lobbyID = (CSteamID)callback.m_ulSteamIDLobby;
-            CSteamID userID = (CSteamID)callback.m_ulSteamIDUser;
-
-            byte[] data = new byte[4096]; // Max message size
-            EChatEntryType chatEntryType;
+            byte[] data = new byte[4096];
             CSteamID sender;
-            int chatID = unchecked((int)callback.m_iChatID);
+            EChatEntryType chatEntryType;
 
+            int chatID = unchecked((int)callback.m_iChatID);
             int bytesRead = SteamMatchmaking.GetLobbyChatEntry(
                 lobbyID,
                 chatID,
@@ -127,6 +157,15 @@ namespace JasonLin.SteamSDK.Lobby
             }
         }
 
-    }
+        private void OnSessionRequest(P2PSessionRequest_t request)
+        {
+            Debug.Log($"Incoming P2P session from {request.m_steamIDRemote}");
+            SteamNetworking.AcceptP2PSessionWithUser(request.m_steamIDRemote);
+        }
 
+        private void OnSessionConnectFail(P2PSessionConnectFail_t fail)
+        {
+            Debug.LogWarning($"P2P connection failed from {fail.m_steamIDRemote}, reason: {fail.m_eP2PSessionError}");
+        }
+    }
 }
